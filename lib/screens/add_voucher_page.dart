@@ -25,9 +25,14 @@ class _AddVoucherPageState extends State<AddVoucherPage> {
 
   Future<void> _save() async {
     if (!_formKey.currentState!.validate()) return;
-
-    final amount = double.parse(_amountController.text.trim());
-    final cents = (amount * 100).round();
+    final cents = () {
+      final text = _amountController.text.trim();
+      final parsed = double.tryParse(text);
+      if (parsed == null) {
+        throw FormatException('Enter a valid amount');
+      }
+      return (parsed * 100).round();
+    }();
 
     try {
       await VaultFirestore().addVoucher(
@@ -44,14 +49,18 @@ class _AddVoucherPageState extends State<AddVoucherPage> {
       if (!mounted) return;
 
       final msg = e.message == 'INSUFFICIENT_FUNDS'
-          ? 'Not enough money in the vault.'
-          : 'Operation failed';
+        ? 'Not enough money in the vault.'
+        : (e.message ?? 'Operation failed');
 
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text(msg)));
-    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+    } catch (e, st) {
+      debugPrint('addVoucher error: $e');
+      debugPrint('$st');
+
+      final message = e is FormatException ? e.message : e.toString();
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Something went wrong')),
+        SnackBar(content: Text(message)),
       );
     }
   }
