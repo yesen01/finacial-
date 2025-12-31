@@ -1,8 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:provider/provider.dart';
-
-import '../models/voucher_model.dart';
-import '../providers/vault_provider.dart';
+import '../services/vault_firestore.dart';
 
 class AddVoucherPage extends StatefulWidget {
   const AddVoucherPage({super.key});
@@ -13,9 +10,11 @@ class AddVoucherPage extends StatefulWidget {
 
 class _AddVoucherPageState extends State<AddVoucherPage> {
   final _formKey = GlobalKey<FormState>();
-  String _type = 'Cash In';
-  final TextEditingController _amountController = TextEditingController();
-  final TextEditingController _descController = TextEditingController();
+  String _direction = 'in';
+  String _method = 'Cash';
+
+  final _amountController = TextEditingController();
+  final _descController = TextEditingController();
 
   @override
   void dispose() {
@@ -24,13 +23,37 @@ class _AddVoucherPageState extends State<AddVoucherPage> {
     super.dispose();
   }
 
-  void _save() {
+  Future<void> _save() async {
     if (!_formKey.currentState!.validate()) return;
+
     final amount = double.parse(_amountController.text.trim());
-    final desc = _descController.text.trim();
-    final voucher = Voucher.create(type: _type, amount: amount, description: desc);
-    context.read<VaultProvider>().addVoucher(voucher);
-    Navigator.pop(context);
+    final cents = (amount * 100).round();
+
+    try {
+      await VaultFirestore().addVoucher(
+        type: _direction == 'in' ? 'Cash In' : 'Cash Out',
+        amountCents: cents,
+        description: _descController.text.trim(),
+        direction: _direction,
+        method: _method,
+      );
+
+      if (!mounted) return;
+      Navigator.pop(context);
+    } on StateError catch (e) {
+      if (!mounted) return;
+
+      final msg = e.message == 'INSUFFICIENT_FUNDS'
+          ? 'Not enough money in the vault.'
+          : 'Operation failed';
+
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(msg)));
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Something went wrong')),
+      );
+    }
   }
 
   @override
@@ -38,41 +61,72 @@ class _AddVoucherPageState extends State<AddVoucherPage> {
     return Scaffold(
       appBar: AppBar(title: const Text('Add Voucher')),
       body: Padding(
-        padding: const EdgeInsets.all(16.0),
+        padding: const EdgeInsets.all(16),
         child: Form(
           key: _formKey,
           child: Column(
             children: [
-              DropdownButtonFormField<String>(
-                value: _type,
-                items: const [
-                  DropdownMenuItem(value: 'Cash In', child: Text('Cash In')),
-                  DropdownMenuItem(value: 'Cash Out', child: Text('Cash Out')),
+              Row(
+                children: [
+                  Expanded(
+                    child: DropdownButtonFormField(
+                      value: _direction,
+                      items: const [
+                        DropdownMenuItem(value: 'in', child: Text('Cash In')),
+                        DropdownMenuItem(value: 'out', child: Text('Cash Out')),
+                      ],
+                      onChanged: (v) =>
+                          setState(() => _direction = v!),
+                      decoration:
+                          const InputDecoration(labelText: 'Direction'),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: DropdownButtonFormField(
+                      value: _method,
+                      items: const [
+                        DropdownMenuItem(value: 'Cash', child: Text('Cash')),
+                        DropdownMenuItem(value: 'Check', child: Text('Check')),
+                        DropdownMenuItem(
+                            value: 'Bank Transfer',
+                            child: Text('Bank Transfer')),
+                      ],
+                      onChanged: (v) =>
+                          setState(() => _method = v!),
+                      decoration:
+                          const InputDecoration(labelText: 'Method'),
+                    ),
+                  ),
                 ],
-                onChanged: (v) => setState(() => _type = v ?? 'Cash In'),
-                decoration: const InputDecoration(labelText: 'Type'),
               ),
               const SizedBox(height: 12),
               TextFormField(
                 controller: _amountController,
-                keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                decoration: const InputDecoration(labelText: 'Amount', prefixText: '\$ '),
+                keyboardType:
+                    const TextInputType.numberWithOptions(decimal: true),
+                decoration:
+                    const InputDecoration(labelText: 'Amount', prefixText: '\$ '),
                 validator: (v) {
-                  if (v == null || v.trim().isEmpty) return 'Enter amount';
-                  final parsed = double.tryParse(v.trim());
-                  if (parsed == null) return 'Enter a valid number';
-                  if (parsed <= 0) return 'Amount must be greater than zero';
+                  final d = double.tryParse(v ?? '');
+                  if (d == null || d <= 0) {
+                    return 'Enter valid amount';
+                  }
                   return null;
                 },
               ),
               const SizedBox(height: 12),
               TextFormField(
                 controller: _descController,
-                decoration: const InputDecoration(labelText: 'Description (optional)'),
-                maxLines: 2,
+                decoration:
+                    const InputDecoration(labelText: 'Description (optional)'),
               ),
               const SizedBox(height: 20),
-              ElevatedButton.icon(onPressed: _save, icon: const Icon(Icons.save), label: const Text('Save')),
+              ElevatedButton.icon(
+                onPressed: _save,
+                icon: const Icon(Icons.save),
+                label: const Text('Save'),
+              ),
             ],
           ),
         ),
