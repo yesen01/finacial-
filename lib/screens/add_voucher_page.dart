@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../services/vault_firestore.dart';
+import 'dart:async';
 
 class AddVoucherPage extends StatefulWidget {
   const AddVoucherPage({super.key});
@@ -53,16 +54,23 @@ class _AddVoucherPageState extends State<AddVoucherPage> {
         : (e.message ?? 'Operation failed');
 
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
-    } catch (e, st) {
-      debugPrint('addVoucher error: $e');
-      debugPrint('$st');
+   } catch (e, st) {
+      // ✅ Web sometimes wraps the real exception inside AsyncError
+      final realError = (e is AsyncError) ? e.error : e;
+      final realStack = (e is AsyncError) ? e.stackTrace : st;
 
-      final message = e is FormatException ? e.message : e.toString();
+      debugPrint('REAL addVoucher error: $realError');
+      debugPrint('REAL stack: $realStack');
+
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(message)),
-      );
+
+      final msg = realError.toString().contains('INSUFFICIENT_FUNDS')
+          ? 'Not enough money in the vault.'
+          : realError.toString(); // show the real error for now
+
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
     }
+
   }
 
   @override

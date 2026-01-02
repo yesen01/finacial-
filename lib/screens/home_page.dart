@@ -59,7 +59,8 @@ class HomePage extends StatelessWidget {
 
                 final totalIn = totalInCents / 100.0;
                 final totalOut = totalOutCents / 100.0;
-                final todayBalance = closingCents / 100.0;
+                final todayBalance = (totalInCents - totalOutCents) / 100.0;
+
 
                 return Card(
                   child: Padding(
