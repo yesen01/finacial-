@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import '../services/vault_firestore.dart';
-import 'dart:async';
 
 class AddVoucherPage extends StatefulWidget {
   const AddVoucherPage({super.key});
@@ -11,9 +10,10 @@ class AddVoucherPage extends StatefulWidget {
 
 class _AddVoucherPageState extends State<AddVoucherPage> {
   final _formKey = GlobalKey<FormState>();
-  String _direction = 'in';
-  String _method = 'Cash';
-
+  
+  // Form State Variables
+  String _direction = 'in'; // Default to "Cash In"
+  String _method = 'Cash';   // Default method
   final _amountController = TextEditingController();
   final _descController = TextEditingController();
 
@@ -25,17 +25,19 @@ class _AddVoucherPageState extends State<AddVoucherPage> {
   }
 
   Future<void> _save() async {
+    // 1. Validate the form
     if (!_formKey.currentState!.validate()) return;
+
+    // 2. Convert Dollars to Cents to avoid floating point math errors
     final cents = () {
       final text = _amountController.text.trim();
       final parsed = double.tryParse(text);
-      if (parsed == null) {
-        throw FormatException('Enter a valid amount');
-      }
+      if (parsed == null) throw const FormatException('Invalid amount');
       return (parsed * 100).round();
     }();
 
     try {
+      // 3. Call the database service
       await VaultFirestore().addVoucher(
         type: _direction == 'in' ? 'Cash In' : 'Cash Out',
         amountCents: cents,
@@ -45,104 +47,105 @@ class _AddVoucherPageState extends State<AddVoucherPage> {
       );
 
       if (!mounted) return;
-      Navigator.pop(context);
-    } on StateError catch (e) {
+      Navigator.pop(context); // Go back to Home Screen on success
+      
+    } catch (e) {
       if (!mounted) return;
+      
+      // Handle "Insufficient Funds" or other errors
+      String errorMsg = e.toString();
+      if (errorMsg.contains('INSUFFICIENT_FUNDS')) {
+        errorMsg = 'Transaction failed: Not enough money in the vault.';
+      }
 
-      final msg = e.message == 'INSUFFICIENT_FUNDS'
-        ? 'Not enough money in the vault.'
-        : (e.message ?? 'Operation failed');
-
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
-   } catch (e, st) {
-      // ✅ Web sometimes wraps the real exception inside AsyncError
-      final realError = (e is AsyncError) ? e.error : e;
-      final realStack = (e is AsyncError) ? e.stackTrace : st;
-
-      debugPrint('REAL addVoucher error: $realError');
-      debugPrint('REAL stack: $realStack');
-
-      if (!mounted) return;
-
-      final msg = realError.toString().contains('INSUFFICIENT_FUNDS')
-          ? 'Not enough money in the vault.'
-          : realError.toString(); // show the real error for now
-
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(errorMsg), backgroundColor: Colors.red),
+      );
     }
-
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Add Voucher')),
-      body: Padding(
-        padding: const EdgeInsets.all(16),
+      appBar: AppBar(
+        title: const Text('Add Transaction'),
+        backgroundColor: Colors.teal,
+        foregroundColor: Colors.white,
+      ),
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.all(16.0),
         child: Form(
           key: _formKey,
           child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
+              // --- DIRECTION & METHOD DROPDOWNS ---
               Row(
                 children: [
                   Expanded(
-                    child: DropdownButtonFormField(
+                    child: DropdownButtonFormField<String>(
                       value: _direction,
+                      decoration: const InputDecoration(labelText: 'Type', border: OutlineInputBorder()),
                       items: const [
                         DropdownMenuItem(value: 'in', child: Text('Cash In')),
                         DropdownMenuItem(value: 'out', child: Text('Cash Out')),
                       ],
-                      onChanged: (v) =>
-                          setState(() => _direction = v!),
-                      decoration:
-                          const InputDecoration(labelText: 'Direction'),
+                      onChanged: (v) => setState(() => _direction = v!),
                     ),
                   ),
                   const SizedBox(width: 12),
                   Expanded(
-                    child: DropdownButtonFormField(
+                    child: DropdownButtonFormField<String>(
                       value: _method,
-                      items: const [
-                        DropdownMenuItem(value: 'Cash', child: Text('Cash')),
-                        DropdownMenuItem(value: 'Check', child: Text('Check')),
-                        DropdownMenuItem(
-                            value: 'Bank Transfer',
-                            child: Text('Bank Transfer')),
-                      ],
-                      onChanged: (v) =>
-                          setState(() => _method = v!),
-                      decoration:
-                          const InputDecoration(labelText: 'Method'),
+                      decoration: const InputDecoration(labelText: 'Method', border: OutlineInputBorder()),
+                      items: const ['Cash', 'Check', 'Bank Transfer']
+                          .map((m) => DropdownMenuItem(value: m, child: Text(m)))
+                          .toList(),
+                      onChanged: (v) => setState(() => _method = v!),
                     ),
                   ),
                 ],
               ),
-              const SizedBox(height: 12),
+              const SizedBox(height: 16),
+
+              // --- AMOUNT FIELD ---
               TextFormField(
                 controller: _amountController,
-                keyboardType:
-                    const TextInputType.numberWithOptions(decimal: true),
-                decoration:
-                    const InputDecoration(labelText: 'Amount', prefixText: '\$ '),
+                keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                decoration: const InputDecoration(
+                  labelText: 'Amount',
+                  prefixText: '\$ ',
+                  border: OutlineInputBorder(),
+                ),
                 validator: (v) {
                   final d = double.tryParse(v ?? '');
-                  if (d == null || d <= 0) {
-                    return 'Enter valid amount';
-                  }
+                  if (d == null || d <= 0) return 'Please enter a valid amount';
                   return null;
                 },
               ),
-              const SizedBox(height: 12),
+              const SizedBox(height: 16),
+
+              // --- DESCRIPTION FIELD ---
               TextFormField(
                 controller: _descController,
-                decoration:
-                    const InputDecoration(labelText: 'Description (optional)'),
+                decoration: const InputDecoration(
+                  labelText: 'Description (Optional)',
+                  hintText: 'e.g. Office Supplies, Salary...',
+                  border: OutlineInputBorder(),
+                ),
               ),
-              const SizedBox(height: 20),
+              const SizedBox(height: 24),
+
+              // --- SAVE BUTTON ---
               ElevatedButton.icon(
                 onPressed: _save,
                 icon: const Icon(Icons.save),
-                label: const Text('Save'),
+                label: const Text('Save Transaction'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.teal,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(vertical: 16),
+                ),
               ),
             ],
           ),

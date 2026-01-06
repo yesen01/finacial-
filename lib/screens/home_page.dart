@@ -1,196 +1,251 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
-
+import 'package:provider/provider.dart';
 import '../services/vault_firestore.dart';
+import '../providers/theme_provider.dart';
 
-class HomePage extends StatelessWidget {
+class HomePage extends StatefulWidget {
   const HomePage({super.key});
+
+  @override
+  State<HomePage> createState() => _HomePageState();
+}
+
+class _HomePageState extends State<HomePage> {
+  String searchQuery = "";
+  String selectedMethod = "All";
+
+  // --- EDIT DIALOG WITH NOTIFICATION ---
+  void _editDialog(String id, String currentDesc, int currentCents, String direction) {
+    final descController = TextEditingController(text: currentDesc);
+    final moneyController = TextEditingController(text: (currentCents / 100).toStringAsFixed(2));
+
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text("Edit Transaction"),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: descController, 
+              decoration: const InputDecoration(labelText: "Description"),
+            ),
+            const SizedBox(height: 10),
+            TextField(
+              controller: moneyController,
+              keyboardType: const TextInputType.numberWithOptions(decimal: true),
+              decoration: const InputDecoration(
+                labelText: "Amount (\$)", 
+                prefixText: "\$ ",
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text("Cancel")),
+          ElevatedButton(
+            onPressed: () async {
+              double amountDouble = double.tryParse(moneyController.text) ?? 0.0;
+              int newAmountCents = (amountDouble * 100).round();
+
+              await VaultFirestore().updateVoucher(
+                docId: id,
+                newDescription: descController.text,
+                newAmountCents: newAmountCents,
+                oldAmountCents: currentCents,
+                direction: direction,
+              );
+              
+              if (mounted) {
+                Navigator.pop(context);
+                // NOTIFICATION: Successful Update
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text("Transaction updated successfully!"),
+                    backgroundColor: Colors.teal,
+                    behavior: SnackBarBehavior.floating,
+                  ),
+                );
+              }
+            },
+            child: const Text("Save Changes"),
+          ),
+        ],
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
     final service = VaultFirestore();
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Financial Vault')),
+      appBar: AppBar(
+        title: const Text('Financial Vault'),
+        backgroundColor: Colors.teal,
+        foregroundColor: Colors.white,
+        actions: [
+          // --- ADVANCED FEATURE: EXPORT BUTTON ---
+          IconButton(
+            icon: const Icon(Icons.file_download),
+            tooltip: "Export CSV",
+            onPressed: () async {
+              String message = await service.exportToCSV();
+              if (mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text(message), 
+                    backgroundColor: Colors.teal,
+                    behavior: SnackBarBehavior.floating,
+                  ),
+                );
+              }
+            },
+          ),
+          Consumer<ThemeProvider>(builder: (context, tp, _) => Switch(
+            value: tp.themeMode == ThemeMode.dark,
+            onChanged: (v) => tp.toggleTheme(v),
+          )),
+          IconButton(
+            icon: const Icon(Icons.logout), 
+            onPressed: () => FirebaseAuth.instance.signOut(),
+          ),
+        ],
+      ),
       body: Padding(
-        padding: const EdgeInsets.all(12.0),
+        padding: const EdgeInsets.all(16.0),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
+            // 1. GLOBAL BALANCE
             StreamBuilder<int>(
               stream: service.balanceCentsStream(),
               builder: (context, snap) {
-                final cents = snap.data ?? 0;
-                final balance = cents / 100.0;
-
+                final balance = (snap.data ?? 0) / 100.0;
                 return Card(
-                  child: Padding(
-                    padding: const EdgeInsets.all(16.0),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        const Text('Balance', style: TextStyle(fontSize: 18)),
-                        Text(
-                          NumberFormat.currency(symbol: '\$').format(balance),
-                          style: TextStyle(
-                            fontSize: 20,
-                            fontWeight: FontWeight.bold,
-                            color: balance >= 0
-                                ? Colors.green[700]
-                                : Colors.red[700],
-                          ),
-                        ),
-                      ],
+                  elevation: 4,
+                  child: ListTile(
+                    title: const Text('Global Balance'),
+                    trailing: Text(
+                      NumberFormat.currency(symbol: '\$').format(balance),
+                      style: TextStyle(
+                        fontSize: 20, 
+                        fontWeight: FontWeight.bold, 
+                        color: balance >= 0 ? Colors.green[700] : Colors.red[700]
+                      ),
                     ),
                   ),
                 );
               },
             ),
             const SizedBox(height: 12),
-            // Today's summary card (Total In, Total Out, Today's Balance)
+
+            // 2. DAILY SUMMARY
             StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
               stream: service.dailyVaultStream(),
               builder: (context, dsnap) {
                 final data = dsnap.data?.data() ?? {};
-                final totalInCents = (data['totalCashIn'] as num?)?.toInt() ?? 0;
-                final totalOutCents = (data['totalCashOut'] as num?)?.toInt() ?? 0;
-                final closingCents = (data['closingBalance'] as num?)?.toInt() ?? 0;
-
-                final totalIn = totalInCents / 100.0;
-                final totalOut = totalOutCents / 100.0;
-                final todayBalance = (totalInCents - totalOutCents) / 100.0;
-
-
-                return Card(
-                  child: Padding(
-                    padding: const EdgeInsets.all(12.0),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceAround,
-                      children: [
-                        Column(
-                          children: [
-                            const Text('Total In', style: TextStyle(fontSize: 12)),
-                            const SizedBox(height: 6),
-                            Text(
-                              NumberFormat.currency(symbol: '\$').format(totalIn),
-                              style: const TextStyle(color: Colors.green, fontWeight: FontWeight.bold),
-                            ),
-                          ],
-                        ),
-                        Column(
-                          children: [
-                            const Text('Total Out', style: TextStyle(fontSize: 12)),
-                            const SizedBox(height: 6),
-                            Text(
-                              NumberFormat.currency(symbol: '\$').format(totalOut),
-                              style: const TextStyle(color: Colors.red, fontWeight: FontWeight.bold),
-                            ),
-                          ],
-                        ),
-                        Column(
-                          children: [
-                            const Text("Today's Balance", style: TextStyle(fontSize: 12)),
-                            const SizedBox(height: 6),
-                            Text(
-                              NumberFormat.currency(symbol: '\$').format(todayBalance),
-                              style: TextStyle(
-                                color: todayBalance >= 0 ? Colors.green[700] : Colors.red[700],
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ],
-                    ),
-                  ),
+                final inVal = ((data['totalCashIn'] as num?)?.toDouble() ?? 0.0) / 100.0;
+                final outVal = ((data['totalCashOut'] as num?)?.toDouble() ?? 0.0) / 100.0;
+                return Row(
+                  children: [
+                    _buildSummaryCard("Total In", inVal, Colors.green),
+                    _buildSummaryCard("Total Out", outVal, Colors.red),
+                    _buildSummaryCard("Net Today", inVal - outVal, Colors.blueGrey),
+                  ],
                 );
               },
             ),
-            const SizedBox(height: 12),
-            const Text(
-              'Vouchers',
-              style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+            const SizedBox(height: 16),
+
+            // 3. ADVANCED FEATURE: SEARCH & FILTER
+            TextField(
+              onChanged: (v) => setState(() => searchQuery = v.toLowerCase()),
+              decoration: InputDecoration(
+                hintText: 'Search descriptions...',
+                prefixIcon: const Icon(Icons.search),
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                filled: true,
+              ),
             ),
             const SizedBox(height: 8),
+            SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                children: ["All", "Cash", "Check", "Bank Transfer"].map((method) => Padding(
+                  padding: const EdgeInsets.only(right: 8),
+                  child: FilterChip(
+                    label: Text(method, style: const TextStyle(fontSize: 12)),
+                    selected: selectedMethod == method,
+                    onSelected: (s) => setState(() => selectedMethod = method),
+                  ),
+                )).toList(),
+              ),
+            ),
+
+            const Divider(height: 24),
+
+            // 4. TRANSACTION LIST WITH DELETE NOTIFICATION
             Expanded(
               child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
                 stream: service.vouchersStream(),
                 builder: (context, snap) {
-                  if (snap.connectionState == ConnectionState.waiting) {
-                    return const Center(child: CircularProgressIndicator());
-                  }
+                  if (!snap.hasData) return const Center(child: CircularProgressIndicator());
+                  
+                  final docs = snap.data!.docs.where((doc) {
+                    final data = doc.data();
+                    final desc = (data['description'] ?? "").toString().toLowerCase();
+                    final method = data['method'] ?? "Cash";
+                    return desc.contains(searchQuery) && (selectedMethod == "All" || method == selectedMethod);
+                  }).toList();
 
-                  final docs = snap.data?.docs ?? [];
-                  if (docs.isEmpty) {
-                    return const Center(
-                      child: Text('No vouchers yet. Tap + to add.'),
-                    );
-                  }
+                  if (docs.isEmpty) return const Center(child: Text("No transactions found."));
 
                   return ListView.builder(
                     itemCount: docs.length,
                     itemBuilder: (context, index) {
-                      final doc = docs[index];
-                      final data = doc.data();
+                      final data = docs[index].data();
+                      final id = docs[index].id;
+                      final amountCents = data['amountCents'] as int;
+                      final direction = data['direction'] as String;
+                      final isIncrease = direction == 'in';
 
-                        final type = (data['type'] as String?) ?? 'Cash In';
-                        final direction = (data['direction'] as String?)?.toLowerCase();
-                        final method = (data['method'] as String?) ;
-                      final amountCents = (data['amountCents'] as int?) ?? 0;
-                      final description =
-                          (data['description'] as String?) ?? '';
-                      final ts = data['createdAt'] as Timestamp?;
-                      final date = ts?.toDate() ?? DateTime.now();
-
-                      final amount = amountCents / 100.0;
-                      // Determine whether this transaction increases the balance.
-                      bool isIncrease;
-                      if (direction != null) {
-                        isIncrease = direction == 'in' || direction == 'cash in';
-                      } else {
-                        isIncrease = (type == 'Cash In');
-                      }
-
-                      // Icon based on method (distinct icon per method)
-                      IconData iconData;
-                      Color methodColor;
-                      final m = method ?? type;
-                      if (m == 'Cash' || m == 'Cash In') {
-                        iconData = Icons.monetization_on;
-                        methodColor = Colors.green;
-                      } else if (m == 'Check') {
-                        iconData = Icons.receipt_long;
-                        methodColor = Colors.orange;
-                      } else if (m == 'Bank Transfer') {
-                        iconData = Icons.account_balance;
-                        methodColor = Colors.blue;
-                      } else {
-                        iconData = isIncrease ? Icons.arrow_downward : Icons.arrow_upward;
-                        methodColor = isIncrease ? Colors.green : Colors.red;
-                      }
-
-                      // Amount color indicates increase/decrease
-                      final amountColor = isIncrease ? Colors.green : Colors.red;
-
-                      return ListTile(
-                        leading: CircleAvatar(
-                          backgroundColor: methodColor.withOpacity(0.2),
-                          child: Icon(iconData, color: methodColor),
-                        ),
-                        title: Text(
-                          description.isNotEmpty
-                              ? description
-                              : '${m}${isIncrease ? ' In' : ' Out'}',
-                        ),
-                        subtitle: Text(
-                          DateFormat.yMMMd().add_jm().format(date),
-                        ),
-                        trailing: Text(
-                          NumberFormat.currency(symbol: '\$').format(amount),
-                          style: TextStyle(
-                            color: amountColor,
-                            fontWeight: FontWeight.bold,
+                      return Card(
+                        margin: const EdgeInsets.only(bottom: 8),
+                        child: ListTile(
+                          leading: Icon(
+                            isIncrease ? Icons.arrow_downward : Icons.arrow_upward, 
+                            color: isIncrease ? Colors.green : Colors.red
+                          ),
+                          title: Text(data['description'].isEmpty ? "Transaction" : data['description']),
+                          subtitle: Text("\$${(amountCents / 100).toStringAsFixed(2)} • ${data['method']}"),
+                          trailing: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              IconButton(
+                                icon: const Icon(Icons.edit, size: 20, color: Colors.teal),
+                                onPressed: () => _editDialog(id, data['description'], amountCents, direction),
+                              ),
+                              IconButton(
+                                icon: const Icon(Icons.delete, size: 20, color: Colors.redAccent),
+                                onPressed: () async {
+                                  await service.deleteVoucher(id, amountCents, direction);
+                                  if (context.mounted) {
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      const SnackBar(
+                                        content: Text("Transaction deleted"),
+                                        backgroundColor: Colors.redAccent,
+                                        behavior: SnackBarBehavior.floating,
+                                        duration: Duration(seconds: 2),
+                                      ),
+                                    );
+                                  }
+                                },
+                              ),
+                            ],
                           ),
                         ),
                       );
@@ -204,7 +259,28 @@ class HomePage extends StatelessWidget {
       ),
       floatingActionButton: FloatingActionButton(
         onPressed: () => Navigator.pushNamed(context, '/add'),
-        child: const Icon(Icons.add),
+        backgroundColor: Colors.teal,
+        child: const Icon(Icons.add, color: Colors.white),
+      ),
+    );
+  }
+
+  Widget _buildSummaryCard(String label, double value, Color color) {
+    return Expanded(
+      child: Card(
+        elevation: 2,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 10),
+          child: Column(
+            children: [
+              Text(label, style: const TextStyle(fontSize: 10, color: Colors.grey)),
+              Text(
+                NumberFormat.currency(symbol: '\$', decimalDigits: 0).format(value),
+                style: TextStyle(color: color, fontWeight: FontWeight.bold, fontSize: 13),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
